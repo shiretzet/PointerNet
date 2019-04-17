@@ -1,7 +1,10 @@
+#!/usr/bin/env python3
+
 import torch
 import torch.nn as nn
 from torch.nn import Parameter
 import torch.nn.functional as F
+from torch import tanh, sigmoid
 
 
 class Encoder(nn.Module):
@@ -98,11 +101,11 @@ class Attention(nn.Module):
         self.context_linear = nn.Conv1d(input_dim, hidden_dim, 1, 1)
         self.V = Parameter(torch.FloatTensor(hidden_dim), requires_grad=True)
         self._inf = Parameter(torch.FloatTensor([float('-inf')]), requires_grad=False)
-        self.tanh = nn.Tanh()
-        self.softmax = nn.Softmax()
+        self.tanh = tanh
+        self.softmax = nn.Softmax(dim=1)
 
         # Initialize vector V
-        nn.init.uniform(self.V, -1, 1)
+        nn.init.uniform_(self.V, -1, 1)
 
     def forward(self, input,
                 context,
@@ -131,7 +134,6 @@ class Attention(nn.Module):
         if len(att[mask]) > 0:
             att[mask] = self.inf[mask]
         alpha = self.softmax(att)
-
         hidden_state = torch.bmm(ctx, alpha.unsqueeze(2)).squeeze(2)
 
         return hidden_state, alpha
@@ -212,17 +214,17 @@ class Decoder(nn.Module):
             gates = self.input_to_hidden(x) + self.hidden_to_hidden(h)
             input, forget, cell, out = gates.chunk(4, 1)
 
-            input = F.sigmoid(input)
-            forget = F.sigmoid(forget)
-            cell = F.tanh(cell)
-            out = F.sigmoid(out)
+            input = sigmoid(input)
+            forget = sigmoid(forget)
+            cell = tanh(cell)
+            out = sigmoid(out)
 
             c_t = (forget * c) + (input * cell)
-            h_t = out * F.tanh(c_t)
+            h_t = out * tanh(c_t)
 
             # Attention section
             hidden_t, output = self.att(h_t, context, torch.eq(mask, 0))
-            hidden_t = F.tanh(self.hidden_out(torch.cat((hidden_t, h_t), 1)))
+            hidden_t = tanh(self.hidden_out(torch.cat((hidden_t, h_t), 1)))
 
             return hidden_t, c_t, output
 
@@ -287,7 +289,7 @@ class PointerNet(nn.Module):
         self.decoder_input0 = Parameter(torch.FloatTensor(embedding_dim), requires_grad=False)
 
         # Initialize decoder_input0
-        nn.init.uniform(self.decoder_input0, -1, 1)
+        nn.init.uniform_(self.decoder_input0, -1, 1)
 
     def forward(self, inputs):
         """
@@ -309,8 +311,8 @@ class PointerNet(nn.Module):
         encoder_outputs, encoder_hidden = self.encoder(embedded_inputs,
                                                        encoder_hidden0)
         if self.bidir:
-            decoder_hidden0 = (torch.cat(encoder_hidden[0][-2:], dim=-1),
-                               torch.cat(encoder_hidden[1][-2:], dim=-1))
+            decoder_hidden0 = (torch.cat([_ for _ in encoder_hidden[0][-2:]], dim=-1),
+                               torch.cat([_ for _ in encoder_hidden[1][-2:]], dim=-1))
         else:
             decoder_hidden0 = (encoder_hidden[0][-1],
                                encoder_hidden[1][-1])
